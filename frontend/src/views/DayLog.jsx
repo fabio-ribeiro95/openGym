@@ -11,7 +11,8 @@ import {
 import { fmtDate, fmtNum, todayISO } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import Icon from '../components/Icon.jsx'
-import { Button, Check, NumberField, Segmented, SelectRow, TextArea, TextField } from '../components/ui.jsx'
+import { Button, Check, NumberField, SearchField, Segmented, SelectRow, TextArea, TextField } from '../components/ui.jsx'
+import { FOOD_PRESETS, SUPP_PRESETS, forGrams, fold, matches } from '../lib/nutri-presets.js'
 import { confirmSheet } from '../sheets.jsx'
 
 const update = fn => useStore.getState().update(fn)
@@ -31,10 +32,37 @@ function Progress({ value, goal }) {
 function FoodSheet({ iso, close }) {
   const S = useStore(s => s.S)
   const meals = itemsOf(S, 'meal')
+  const [mode, setMode] = useState('list')
+  const [query, setQuery] = useState('')
+  const [picked, setPicked] = useState(null)        // a food from the list, waiting for its grams
+  const [grams, setGrams] = useState(null)
   const [f, setF] = useState({ n: '', kcal: null, p: null, c: null, f: null })
   const [save, setSave] = useState(false)
+  const log = item => { editToday(iso, d => addFood(d, item)); toast(t('Added')); close() }
+
+  const foods = FOOD_PRESETS.map(x => ({ ...x, name: t(x.key) })).filter(x => matches(x.name, query))
+    .sort((a, b) => a.name.localeCompare(b.name))
+  const savedHits = meals.filter(m => matches(m.name, query))
+  const macros = v => [v.kcal != null && fmtNum(v.kcal) + ' kcal', v.p != null && fmtNum(v.p) + ' g P', v.c != null && fmtNum(v.c) + ' g C', v.f != null && fmtNum(v.f) + ' g F'].filter(Boolean).join(' · ')
+
+  if (picked) {
+    const v = forGrams(picked, grams)
+    return <>
+      <h3 style={{ marginTop: 0 }}>{picked.name}</h3>
+      <label className="row between" style={{ alignItems: 'center', margin: '6px 0 10px' }}>
+        <span>{t('Amount')}</span>
+        <span className="row" style={{ gap: 6, alignItems: 'baseline' }}>
+          <NumberField nullable decimal={false} style={{ width: 90, textAlign: 'right' }} value={grams} onChange={setGrams} /><span className="muted">g</span>
+        </span>
+      </label>
+      <div className="muted small" style={{ marginBottom: 12 }}>{v ? macros(v) : t('Enter the amount in grams.')}</div>
+      <div className="muted small" style={{ marginBottom: 12 }}>{t('Typical values per 100 g. Check the label if you have one.')}</div>
+      <Button variant="primary" disabled={!v} onClick={() => log({ n: picked.name + ' (' + fmtNum(grams) + ' g)', ...v })}>{t('Add')}</Button>
+      <div style={{ height: 8 }} /><Button variant="ghost" onClick={() => setPicked(null)}>{t('Back')}</Button>
+    </>
+  }
+
   const food = readFood(f)
-  const log = item => { editToday(iso, d => addFood(d, item)); close() }
   const submit = () => {
     if (!food) return
     if (save && food.n) update(s => { s.nutriItems = withItem(s.nutriItems, newItemId(), { kind: 'meal', name: food.n, kcal: food.kcal, p: food.p, c: food.c, f: food.f }) })
@@ -48,34 +76,54 @@ function FoodSheet({ iso, close }) {
   </label>
   return <>
     <h3 style={{ marginTop: 0 }}>{t('Add food')}</h3>
-    {meals.length > 0 && <>
-      <h4 className="sec">{t('Saved meals')}</h4>
-      <div className="list">{meals.map(m => <div className="lrow" key={m.id} style={{ cursor: 'pointer' }} onClick={() => log({ n: m.name, kcal: m.kcal, p: m.p, c: m.c, f: m.f })}>
-        <span className="lrow-m"><span className="lrow-t">{m.name}</span>
-          <span className="lrow-s">{[m.kcal != null && fmtNum(m.kcal) + ' kcal', m.p != null && fmtNum(m.p) + ' g ' + t('protein')].filter(Boolean).join(' · ')}</span></span>
-        <button className="iconbtn" style={{ color: 'var(--red)' }} aria-label={t('Delete')}
-          onClick={e => { e.stopPropagation(); update(s => { s.nutriItems = removeItem(s.nutriItems, m.id) }) }}><Icon name="trash" /></button>
-      </div>)}</div>
+    <Segmented value={mode} onChange={setMode} options={[{ value: 'list', label: t('From the list') }, { value: 'manual', label: t('Type it in') }]} />
+    <div style={{ height: 10 }} />
+    {mode === 'list' ? <>
+      <SearchField value={query} placeholder={t('Search foods')} onChange={e => setQuery(e.target.value)} onClear={() => setQuery('')} />
+      {savedHits.length > 0 && <>
+        <h4 className="sec">{t('Saved meals')}</h4>
+        <div className="list">{savedHits.map(m => <div className="lrow" key={m.id} role="button" tabIndex={0} style={{ cursor: 'pointer' }}
+          onClick={() => log({ n: m.name, kcal: m.kcal, p: m.p, c: m.c, f: m.f })}>
+          <span className="lrow-m"><span className="lrow-t">{m.name}</span><span className="lrow-s">{macros(m)}</span></span>
+          <button className="iconbtn" style={{ color: 'var(--red)' }} aria-label={t('Delete')}
+            onClick={e => { e.stopPropagation(); update(s => { s.nutriItems = removeItem(s.nutriItems, m.id) }) }}><Icon name="trash" /></button>
+        </div>)}</div>
+      </>}
+      {foods.length > 0 && <>
+        <h4 className="sec">{t('Common foods')}</h4>
+        <div className="list">{foods.map(x => <div className="lrow" key={x.key} role="button" tabIndex={0} style={{ cursor: 'pointer' }}
+          onClick={() => { setPicked(x); setGrams(x.g) }}>
+          <span className="lrow-m"><span className="lrow-t">{x.name}</span><span className="lrow-s">{t('{0} kcal per 100 g', fmtNum(x.kcal))}</span></span>
+          <Icon name="chevronRight" />
+        </div>)}</div>
+      </>}
+      {!foods.length && !savedHits.length && <div className="empty small">
+        {t('Nothing found.')} <Button size="sm" variant="ghost" onClick={() => { setF(x => ({ ...x, n: query.trim().slice(0, NAME_MAX) })); setMode('manual') }}>{t('Type it in')}</Button>
+      </div>}
+    </> : <>
+      <TextField value={f.n} maxLength={NAME_MAX} placeholder={t('Name (optional)')} onChange={e => setF(x => ({ ...x, n: e.target.value }))} />
+      <div className="row" style={{ gap: 10, margin: '10px 0' }}>{field('kcal', t('Calories'), 'kcal')}{field('p', t('Protein'), 'g')}</div>
+      <div className="row" style={{ gap: 10, margin: '10px 0' }}>{field('c', t('Carbs'), 'g')}{field('f', t('Fat'), 'g')}</div>
+      <div className="row" style={{ gap: 10, margin: '10px 0' }}>
+        <Check checked={save} onChange={setSave} label={t('Save as a meal')} /><span>{t('Save as a meal')}</span>
+      </div>
+      <Button variant="primary" onClick={submit} disabled={!food}>{t('Add')}</Button>
     </>}
-    <h4 className="sec">{t('Something else')}</h4>
-    <TextField value={f.n} maxLength={NAME_MAX} placeholder={t('Name (optional)')} onChange={e => setF(x => ({ ...x, n: e.target.value }))} />
-    <div className="row" style={{ gap: 10, margin: '10px 0' }}>{field('kcal', t('Calories'), 'kcal')}{field('p', t('Protein'), 'g')}</div>
-    <div className="row" style={{ gap: 10, margin: '10px 0' }}>{field('c', t('Carbs'), 'g')}{field('f', t('Fat'), 'g')}</div>
-    <div className="row" style={{ gap: 10, margin: '10px 0' }}>
-      <Check checked={save} onChange={setSave} label={t('Save as a meal')} /><span>{t('Save as a meal')}</span>
-    </div>
-    <Button variant="primary" onClick={submit} disabled={!food}>{t('Add')}</Button>
   </>
 }
 
 function SuppSheet({ id, close }) {
   const S = useStore(s => s.S)
-  const cur = id ? itemsOf(S, 'supp').find(x => x.id === id) : null
+  const mine = itemsOf(S, 'supp')
+  const cur = id ? mine.find(x => x.id === id) : null
   const [name, setName] = useState(cur?.name || '')
   const [dose, setDose] = useState(cur?.dose || '')
   const [when, setWhen] = useState(cur?.when || '')
+  const have = new Set(mine.map(x => fold(x.name)))
+  const suggestions = id ? [] : SUPP_PRESETS.map(k => t(k)).filter(n => !have.has(fold(n)))
   const save = () => {
     update(s => { s.nutriItems = withItem(s.nutriItems, id || newItemId(), { kind: 'supp', name, dose, when: when || null }) })
+    toast(id ? t('Saved') : t('Added'))
     close()
   }
   const remove = () => confirmSheet({
@@ -85,6 +133,11 @@ function SuppSheet({ id, close }) {
   })
   return <>
     <h3 style={{ marginTop: 0 }}>{id ? t('Edit supplement') : t('Add supplement')}</h3>
+    {suggestions.length > 0 && <>
+      <div className="muted small" style={{ marginBottom: 8 }}>{t('Pick one, or type any name below.')}</div>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>{suggestions.map(n =>
+        <Button key={n} size="sm" variant={fold(name) === fold(n) ? 'primary' : 'tinted'} onClick={() => setName(n)}>{n}</Button>)}</div>
+    </>}
     <TextField value={name} maxLength={NAME_MAX} placeholder={t('Name')} onChange={e => setName(e.target.value)} />
     <div style={{ height: 8 }} />
     <TextField value={dose} maxLength={DOSE_MAX} placeholder={t('Dose, for example 5 g')} onChange={e => setDose(e.target.value)} />
