@@ -799,6 +799,8 @@ body.chips-dragging *{cursor:inherit}
   transition:transform var(--med) var(--ease);
 }
 :root[data-theme="light"] .seg-sel{background:#fff}
+/* nothing picked yet: no pill rather than one parked on the first option */
+.seg-none .seg-sel{opacity:0}
 .seg button{
   position:relative;z-index:1;padding:6px 8px;font-size:14px;font-weight:500;
   letter-spacing:-.006em;color:var(--label);display:flex;align-items:center;

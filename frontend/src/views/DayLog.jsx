@@ -32,7 +32,8 @@ function Ring({ pct, color = 'var(--acc)', size = 58, stroke = 11, children }) {
   return <div style={{ position: 'relative', width: size, height: size, flex: 'none' }}>
     <svg viewBox="0 0 100 100" width={size} height={size} style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
       <circle cx="50" cy="50" r={r} fill="none" stroke="var(--surface-3)" strokeWidth={stroke} />
-      <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" pathLength="100" strokeDasharray={p + ' 100'} />
+      {/* at 0 the round cap alone would still draw a dot at the top */}
+      {p > 0 && <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" pathLength="100" strokeDasharray={p + ' 100'} />}
     </svg>
     <div style={{ position: 'absolute', inset: 0, display: 'grid', placeContent: 'center', textAlign: 'center' }}>{children}</div>
   </div>
@@ -63,7 +64,7 @@ function FoodSheet({ iso, meal, close }) {
       <label className="row between" style={{ alignItems: 'center', margin: '6px 0 10px' }}>
         <span>{t('Amount')}</span>
         <span className="row" style={{ gap: 6, alignItems: 'baseline' }}>
-          <NumberField nullable decimal={false} style={{ width: 90, textAlign: 'right' }} value={grams} onChange={setGrams} /><span className="muted">g</span>
+          <NumberField nullable decimal={false} className="field" style={{ width: 90, textAlign: 'right' }} value={grams} onChange={setGrams} /><span className="muted">g</span>
         </span>
       </label>
       <div className="muted small" style={{ marginBottom: 12 }}>{v ? macros(v) : t('Enter the amount in grams.')}</div>
@@ -82,7 +83,7 @@ function FoodSheet({ iso, meal, close }) {
   const field = (key, label, unit) => <label style={{ flex: 1, minWidth: 0 }}>
     <div className="muted small">{label}</div>
     <div className="row" style={{ gap: 4, alignItems: 'baseline' }}>
-      <NumberField nullable value={f[key]} onChange={v => setF(x => ({ ...x, [key]: v }))} /><span className="muted small">{unit}</span>
+      <NumberField nullable className="field" value={f[key]} onChange={v => setF(x => ({ ...x, [key]: v }))} /><span className="muted small">{unit}</span>
     </div>
   </label>
   return <>
@@ -175,7 +176,7 @@ function GoalsSheet({ close }) {
     <label className="row between" style={{ alignItems: 'center' }}>
       <span>{label}</span>
       <span className="row" style={{ gap: 6, alignItems: 'baseline' }}>
-        <NumberField nullable decimal={decimal} style={{ width: 90, textAlign: 'right' }} value={g[key]} onChange={v => set(key, v || null)} />
+        <NumberField nullable decimal={decimal} className="field" style={{ width: 90, textAlign: 'right' }} value={g[key]} onChange={v => set(key, v || null)} />
         <span className="muted small" style={{ minWidth: 32 }}>{unit}</span>
       </span>
     </label>
@@ -317,10 +318,8 @@ function FastCard({ S, day }) {
   const stop = () => { update(s => { const r = endFast(s); s.nutriItems = r.nutriItems; s.dayLog = r.dayLog }); toast(t('Fast ended')) }
   const plan = p => update(s => { s.nutriItems = withFast(s.nutriItems, { ...fastOf(s), plan: p }) })
   return <div className="card">
-    <div className="row between" style={{ alignItems: 'center' }}>
-      <h4 className="sec" style={{ margin: 0 }}>{t('Intermittent fasting')}</h4>
-      <SelectRow title={t('Plan')} value={fast.plan} onChange={plan} options={PLANS.map(p => ({ value: p, label: p + ':' + (24 - p) }))} />
-    </div>
+    <h4 className="sec" style={{ marginTop: 0 }}>{t('Intermittent fasting')}</h4>
+    <div className="sect-b"><SelectRow title={t('Plan')} value={fast.plan} onChange={plan} options={PLANS.map(p => ({ value: p, label: p + ':' + (24 - p) }))} /></div>
     <div className="row" style={{ gap: 14, alignItems: 'center', flexWrap: 'nowrap', margin: '10px 0' }}>
       <Ring pct={pct} size={92} stroke={10}><span className="muted small">{on ? Math.floor(Math.min(100, pct)) + '%' : '–'}</span></Ring>
       <div style={{ minWidth: 0 }}>
@@ -402,14 +401,14 @@ export default function DayLog() {
       <h4 className="sec" style={{ marginTop: 0 }}>{t('Sleep')}</h4>
       <div className="row between" style={{ alignItems: 'center' }}>
         <span className="row" style={{ gap: 6, alignItems: 'baseline' }}>
-          <NumberField nullable value={day.sleep?.h ?? null} style={{ width: 80 }}
+          <NumberField nullable className="field" value={day.sleep?.h ?? null} style={{ width: 80 }}
             onChange={v => edit(d => setSleep(d, { h: v == null ? null : Math.min(SLEEP_MAX_H, v) }))} />
           <span className="muted">{t('hours')}</span>
         </span>
         {goals.sleepH && <span className="muted small">{t('goal {0} h', fmtNum(goals.sleepH))}</span>}
       </div>
       <div className="muted small" style={{ margin: '10px 0 6px' }}>{t('How rested do you feel? 1 is awful, 5 is great.')}</div>
-      <Segmented value={day.sleep?.q ?? 0} options={quality} onChange={v => edit(d => setSleep(d, { q: v === d.sleep?.q ? null : v }))} />
+      <Segmented className={day.sleep?.q ? '' : 'seg-none'} value={day.sleep?.q ?? 0} options={quality} onChange={v => edit(d => setSleep(d, { q: v === d.sleep?.q ? null : v }))} />
     </div>
 
     <div className="card">
