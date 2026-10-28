@@ -96,6 +96,9 @@ export const DEF = {
   // A note per day off (#261): { [iso]: { tag, text, _ts } } (lib/day-notes.js). A noted day is
   // excused from the missed-day nudge; each day merges on its own stamp (lib/sync-merge.js).
   dayNotes: {},
+  // The day log (lib/daylog.js): sleep, water, food and supplements per day, and the supplements,
+  // saved meals and goals they refer to. Both are stamped per entry (sync-merge.js STAMPED_MAPS).
+  dayLog: {}, nutriItems: {},
   // Body measurements (#82, #699): one check-in per day; canonical cm, kg or % according to
   // the field's unit (lib/measurements.js); merged like weigh-ins (lib/sync-merge.js).
   measurements: [], measurementEnabled: null, customMeasurements: [],
