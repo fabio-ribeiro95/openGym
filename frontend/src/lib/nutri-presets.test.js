@@ -16,7 +16,7 @@ describe('the starting lists', () => {
 
 describe('scaling to a portion', () => {
   it('scales calories to whole numbers and macros to tenths', () => {
-    expect(forGrams({ kcal: 165, p: 31, c: 0, f: 3.6 }, 150)).toEqual({ kcal: 248, p: 46.5, c: 0, f: 5.4 })
+    expect(forGrams({ kcal: 165, p: 31, c: 0, f: 3.6 }, 150)).toEqual({ kcal: 248, p: 46.5, c: 0, f: 5.4, fib: null })
   })
   it('gives nothing without a positive weight', () => {
     expect(forGrams({ kcal: 100, p: 1, c: 1, f: 1 }, 0)).toBeNull()

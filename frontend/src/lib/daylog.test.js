@@ -8,6 +8,7 @@ import {
   shiftISO, toggleTaken, totalsOf, withDay, withGoals, withItem,
 } from './daylog.js'
 import { mergeStates, stampChange, STAMPED_MAPS } from './sync-merge.js'
+import { mealOf, fastOf, withFast, endFast } from './daylog.js'
 import { NOTE_MAX } from './history.js'
 import { isoOf } from './format.js'
 
@@ -20,7 +21,7 @@ const clone = o => JSON.parse(JSON.stringify(o))
 describe('reading a day', () => {
   it('keeps what is valid and drops junk', () => {
     expect(readDay({ sleep: { h: 7.5, q: 4 }, water: 2000, taken: ['a', 'a', 'b'], note: '  ok  ', _ts: 1 }))
-      .toEqual({ sleep: { h: 7.5, q: 4 }, water: 2000, food: [], taken: ['a', 'b'], note: 'ok' })
+      .toEqual({ sleep: { h: 7.5, q: 4 }, water: 2000, food: [], taken: ['a', 'b'], note: 'ok', fast: null })
     expect(readDay({ sleep: { h: -3, q: 9 }, water: 'lots', taken: [3, null, ''], food: [{}, 'x', { n: 'only a name' }] })).toBeNull()
     for (const junk of [null, undefined, 'x', 3, [], { _ts: 4 }]) expect(readDay(junk)).toBeNull()
   })
@@ -34,10 +35,10 @@ describe('reading a day', () => {
   })
 
   it('reads a food entry with any one of its numbers', () => {
-    expect(readFood({ n: ' Lunch ', kcal: 700.4, p: 45.26 })).toEqual({ n: 'Lunch', kcal: 700, p: 45.3, c: null, f: null })
+    expect(readFood({ n: ' Lunch ', kcal: 700.4, p: 45.26 })).toEqual({ n: 'Lunch', kcal: 700, p: 45.3, c: null, f: null, fib: null, m: null })
     expect(readFood({ n: 'water' })).toBeNull()
     expect(readFood({ kcal: -5 })).toBeNull()
-    expect(readFood({ kcal: 0 })).toEqual({ n: '', kcal: 0, p: null, c: null, f: null })
+    expect(readFood({ kcal: 0 })).toEqual({ n: '', kcal: 0, p: null, c: null, f: null, fib: null, m: null })
   })
 
   it('cuts the note at the shared limit', () => {
@@ -83,10 +84,10 @@ describe('writing a day', () => {
     d = addFood(d, { n: 'Whey', kcal: 120, p: 24 })
     d = addFood(d, { n: 'nothing' })
     expect(d.food).toHaveLength(2)
-    expect(totalsOf(d)).toEqual({ kcal: 520, p: 39, c: 60, f: 8 })
+    expect(totalsOf(d)).toEqual({ kcal: 520, p: 39, c: 60, f: 8, fib: 0 })
     d = removeFood(d, 0)
     expect(d.food.map(f => f.n)).toEqual(['Whey'])
-    expect(totalsOf(emptyDay())).toEqual({ kcal: 0, p: 0, c: 0, f: 0 })
+    expect(totalsOf(emptyDay())).toEqual({ kcal: 0, p: 0, c: 0, f: 0, fib: 0 })
   })
 
   it('toggles a supplement taken and sets a note', () => {
@@ -109,9 +110,9 @@ describe('supplements, saved meals and goals', () => {
     expect(readItem({ kind: 'supp', name: ' Creatine ', dose: '5 g', when: 'morning', _ts: 1 })).toEqual({ kind: 'supp', name: 'Creatine', dose: '5 g', when: 'morning' })
     expect(readItem({ kind: 'supp', name: 'Zinc', when: 'sometime' })).toEqual({ kind: 'supp', name: 'Zinc', dose: '', when: null })
     expect(readItem({ kind: 'supp', name: '  ' })).toBeNull()
-    expect(readItem({ kind: 'meal', name: 'Oats', kcal: 500, p: 20 })).toEqual({ kind: 'meal', name: 'Oats', kcal: 500, p: 20, c: null, f: null })
+    expect(readItem({ kind: 'meal', name: 'Oats', kcal: 500, p: 20 })).toEqual({ kind: 'meal', name: 'Oats', kcal: 500, p: 20, c: null, f: null, fib: null })
     expect(readItem({ kind: 'meal', name: 'Empty' })).toBeNull()
-    expect(readItem({ kind: 'goals', protein: 160 })).toEqual({ kind: 'goals', kcal: null, protein: 160, water: null, sleepH: null })
+    expect(readItem({ kind: 'goals', protein: 160 })).toMatchObject({ kind: 'goals', kcal: null, protein: 160, water: null, sleepH: null, auto: true })
     expect(readItem({ kind: 'goals' })).toBeNull()
     expect(readItem({ kind: 'other', name: 'x' })).toBeNull()
     expect(readItem({ _ts: 3 })).toBeNull()
@@ -134,7 +135,7 @@ describe('supplements, saved meals and goals', () => {
     const map = withGoals({}, { kcal: 2600, protein: 160, water: 2500, sleepH: 8 }, 5)
     expect(map[GOALS_ID]).toMatchObject({ kind: 'goals', kcal: 2600, _ts: 5 })
     expect(goalsOf({ nutriItems: map })).toMatchObject({ kcal: 2600, protein: 160, water: 2500, sleepH: 8 })
-    expect(goalsOf({})).toEqual({ kind: 'goals', kcal: null, protein: null, water: null, sleepH: null })
+    expect(goalsOf({})).toMatchObject({ kind: 'goals', kcal: null, protein: null, water: null, sleepH: null, auto: true, heightCm: null })
     expect(itemsOf({ nutriItems: map }, 'goals')).toHaveLength(1)
   })
 
@@ -262,5 +263,34 @@ describe('syncing the day log', () => {
     const today = isoOf(new Date())
     const a = base({ _ts: 10, dayLog: { [today]: { water: 100, _ts: 5 } } })
     expect(mergeStates(a, base({ _ts: 1 })).dayLog[today].water).toBe(100)
+  })
+})
+
+describe('meals, fibre and fasting', () => {
+  it('keeps the meal a food was logged under, and shows older entries with the snacks', () => {
+    const d = readDay({ food: [{ n: 'Oats', kcal: 230, fib: 6, m: 'breakfast' }, { kcal: 100, m: 'brunch' }] })
+    expect(d.food.map(f => f.m)).toEqual(['breakfast', null])
+    expect(d.food.map(mealOf)).toEqual(['breakfast', 'snack'])
+    expect(totalsOf(d).fib).toBe(6)
+    const map = withDay({}, '2026-10-02', d, 5)
+    expect(map['2026-10-02'].food).toEqual([{ n: 'Oats', kcal: 230, fib: 6, m: 'breakfast' }, { kcal: 100 }])
+  })
+
+  it('reads the calculator fields and throws out what is out of range', () => {
+    const g = readItem({ kind: 'goals', heightCm: 178, birthYear: 1996, sex: 'm', life: 'light', extraH: 2.25, extraLevel: 'vigorous', dir: 'lose', rate: 0.5 })
+    expect(g).toMatchObject({ heightCm: 178, birthYear: 1996, sex: 'm', life: 'light', extraH: 2.3, extraLevel: 'vigorous', dir: 'lose', rate: 0.5, auto: true })
+    const bad = readItem({ kind: 'goals', heightCm: 40, sex: 'x', life: 'couch', dir: 'up', kcal: 2000, auto: false })
+    expect(bad).toMatchObject({ heightCm: null, sex: null, life: null, dir: null, kcal: 2000, auto: false })
+  })
+
+  it('starts and ends a fast, and books the hours on the day it ended', () => {
+    const start = new Date('2026-10-01T20:00:00').getTime()
+    const end = new Date('2026-10-02T12:30:00').getTime()
+    let S = { nutriItems: withFast({}, { plan: 16, start }, 1), dayLog: {} }
+    expect(fastOf(S)).toEqual({ kind: 'fast', plan: 16, start })
+    S = { ...S, ...endFast(S, end) }
+    expect(fastOf(S).start).toBeNull()
+    expect(dayLogOf(S, '2026-10-02').fast).toBe(16.5)
+    expect(fastOf({})).toEqual({ kind: 'fast', plan: 16, start: null })
   })
 })

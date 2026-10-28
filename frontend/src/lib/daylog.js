@@ -8,13 +8,16 @@
 // never a deleted key: a delete would come straight back from the other device's copy.
 //
 //   S.dayLog = { '2026-10-28': { sleep: { h: 7.5, q: 4 }, water: 2000,
-//                                food: [{ n: 'Lunch', kcal: 700, p: 45, c: 80, f: 20 }],
-//                                taken: ['<supplement id>'], note: '…', _ts }, … }
+//                                food: [{ n: 'Rice', kcal: 260, p: 5, c: 56, f: 1, fib: 1, m: 'lunch' }],
+//                                taken: ['<supplement id>'], note: '…', fast: 16.2, _ts }, … }
 //   S.nutriItems = {
 //     '<id>': { kind: 'supp', name: 'Creatine', dose: '5 g', when: 'morning', _ts },
 //     '<id>': { kind: 'meal', name: 'Oats and whey', kcal: 520, p: 40, c: 60, f: 12, _ts },
-//     goals:  { kind: 'goals', kcal: 2600, protein: 160, water: 2500, sleepH: 8, _ts },
+//     goals:  { kind: 'goals', kcal: 2600, protein: 160, water: 2500, sleepH: 8, auto: true,
+//               heightCm: 178, birthYear: 1996, sex: 'm', life: 'light', extraH: 2, … , _ts },
+//     fast:   { kind: 'fast', plan: 16, start: <ms or null>, _ts },
 //   }
+// A food's `m` is the meal it belongs to; `fast` on a day is the hours of a fast that ended on it.
 //
 // Pure functions only: nothing here reads the store, the clock (unless handed a `now`) or the DOM.
 import { NOTE_MAX } from './history.js'
@@ -34,6 +37,17 @@ export const FOOD_MAX_ENTRIES = 60
 export const NAME_MAX = 40
 export const DOSE_MAX = 30
 export const GOALS_ID = 'goals'
+export const FAST_ID = 'fast'
+export const FAST_MAX_H = 72
+
+/** The meals a day is split into, with the share of the day's calories each one aims at. */
+export const MEAL_KEYS = ['breakfast', 'lunch', 'dinner', 'snack']
+export const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snacks' }
+export const MEAL_SHARE = { breakfast: 0.25, lunch: 0.35, dinner: 0.3, snack: 0.1 }
+
+export const LIFE_KEYS = ['sedentary', 'light', 'active']
+export const EXTRA_LEVELS = ['light', 'moderate', 'vigorous']
+export const GOAL_DIRS = ['lose', 'hold', 'gain']
 
 /** About 7700 kcal per kg of body weight: the usual rule of thumb, rough by nature. */
 export const KCAL_PER_KG = 7700
@@ -54,14 +68,20 @@ const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 // ---- A day ---------------------------------------------------------------------------------
 
-export const emptyDay = () => ({ sleep: null, water: null, food: [], taken: [], note: '' })
+export const emptyDay = () => ({ sleep: null, water: null, food: [], taken: [], note: '', fast: null })
 
-/** One food entry read back: { n, kcal, p, c, f } (numbers or null), or null when it holds nothing. */
+/**
+ * One food entry read back: { n, kcal, p, c, f, fib } (numbers or null) and `m`, its meal (one of
+ * MEAL_KEYS, or null for an entry from before meals, shown with the snacks); null when it holds nothing.
+ */
 export function readFood(e) {
   if (!isMap(e)) return null
-  const out = { n: text(e.n, NAME_MAX), kcal: num(e.kcal, KCAL_MAX), p: num(e.p, GRAMS_MAX, 1), c: num(e.c, GRAMS_MAX, 1), f: num(e.f, GRAMS_MAX, 1) }
-  return out.kcal == null && out.p == null && out.c == null && out.f == null ? null : out
+  const out = { n: text(e.n, NAME_MAX), kcal: num(e.kcal, KCAL_MAX), p: num(e.p, GRAMS_MAX, 1), c: num(e.c, GRAMS_MAX, 1), f: num(e.f, GRAMS_MAX, 1), fib: num(e.fib, GRAMS_MAX, 1), m: MEAL_KEYS.includes(e.m) ? e.m : null }
+  return out.kcal == null && out.p == null && out.c == null && out.f == null && out.fib == null ? null : out
 }
+
+/** The meal a food is shown under: its own, or the snacks for one logged before meals existed. */
+export const mealOf = f => f?.m || 'snack'
 
 /** A stored day read back, junk left out: { sleep: { h, q } | null, water, food, taken, note }; null for none or a cleared one. */
 export function readDay(entry) {
@@ -74,11 +94,12 @@ export function readDay(entry) {
     food: (Array.isArray(entry.food) ? entry.food : []).map(readFood).filter(Boolean).slice(0, FOOD_MAX_ENTRIES),
     taken: [...new Set((Array.isArray(entry.taken) ? entry.taken : []).filter(x => typeof x === 'string' && x))],
     note: text(entry.note, NOTE_MAX),
+    fast: num(entry.fast, FAST_MAX_H, 1) || null,
   }
   return isEmptyDay(day) ? null : day
 }
 
-export const isEmptyDay = d => !d || (!d.sleep && d.water == null && !d.food.length && !d.taken.length && !d.note)
+export const isEmptyDay = d => !d || (!d.sleep && d.water == null && !d.food.length && !d.taken.length && !d.note && !d.fast)
 
 /** The log for `iso`, or null. */
 export const dayLogOf = (S, iso) => readDay(isMap(S?.dayLog) ? S.dayLog[iso] : null)
@@ -89,9 +110,14 @@ export const canLogDay = (iso, today = todayISO()) => ISO.test(String(iso || '')
 const stored = d => ({
   ...(d.sleep ? { sleep: { ...(d.sleep.h != null ? { h: d.sleep.h } : {}), ...(d.sleep.q != null ? { q: d.sleep.q } : {}) } } : {}),
   ...(d.water != null ? { water: d.water } : {}),
-  ...(d.food.length ? { food: d.food.map(f => ({ ...(f.n ? { n: f.n } : {}), ...(f.kcal != null ? { kcal: f.kcal } : {}), ...(f.p != null ? { p: f.p } : {}), ...(f.c != null ? { c: f.c } : {}), ...(f.f != null ? { f: f.f } : {}) })) } : {}),
+  ...(d.food.length ? { food: d.food.map(f => {
+    const o = {}
+    for (const k of ['n', 'kcal', 'p', 'c', 'f', 'fib', 'm']) if (f[k] != null && f[k] !== '') o[k] = f[k]
+    return o
+  }) } : {}),
   ...(d.taken.length ? { taken: d.taken } : {}),
   ...(d.note ? { note: d.note } : {}),
+  ...(d.fast ? { fast: d.fast } : {}),
 })
 
 /**
@@ -122,7 +148,7 @@ export const setNote = (d, v) => ({ ...d, note: text(v, NOTE_MAX) })
 /** What the day's food adds up to. A macro nobody typed stays out of its total, so 0 means "none". */
 export function totalsOf(day) {
   const sum = k => (day?.food || []).reduce((s, f) => s + (f[k] || 0), 0)
-  return { kcal: round(sum('kcal')), p: round(sum('p'), 1), c: round(sum('c'), 1), f: round(sum('f'), 1) }
+  return { kcal: round(sum('kcal')), p: round(sum('p'), 1), c: round(sum('c'), 1), f: round(sum('f'), 1), fib: round(sum('fib'), 1) }
 }
 
 // ---- Supplements, saved meals, goals ----------------------------------------------------------
@@ -135,12 +161,28 @@ export function readItem(entry) {
     return name ? { kind: 'supp', name, dose: text(entry.dose, DOSE_MAX), when: SUPP_TIMES.includes(entry.when) ? entry.when : null } : null
   }
   if (entry.kind === 'meal') {
-    const m = { kind: 'meal', name, kcal: num(entry.kcal, KCAL_MAX), p: num(entry.p, GRAMS_MAX, 1), c: num(entry.c, GRAMS_MAX, 1), f: num(entry.f, GRAMS_MAX, 1) }
+    const m = { kind: 'meal', name, kcal: num(entry.kcal, KCAL_MAX), p: num(entry.p, GRAMS_MAX, 1), c: num(entry.c, GRAMS_MAX, 1), f: num(entry.f, GRAMS_MAX, 1), fib: num(entry.fib, GRAMS_MAX, 1) }
     return name && (m.kcal != null || m.p != null || m.c != null || m.f != null) ? m : null
   }
   if (entry.kind === 'goals') {
-    const g = { kind: 'goals', kcal: num(entry.kcal, KCAL_MAX), protein: num(entry.protein, GRAMS_MAX), water: num(entry.water, WATER_MAX_ML), sleepH: num(entry.sleepH, SLEEP_MAX_H, 1) }
-    return g.kcal != null || g.protein != null || g.water != null || g.sleepH != null ? g : null
+    const range = (v, lo, hi, dec = 0) => { const n = num(v, hi, dec); return n != null && n >= lo ? n : null }
+    const one = (v, list) => (list.includes(v) ? v : null)
+    const g = {
+      kind: 'goals', kcal: num(entry.kcal, KCAL_MAX), protein: num(entry.protein, GRAMS_MAX), carbs: num(entry.carbs, GRAMS_MAX),
+      fat: num(entry.fat, GRAMS_MAX), fiber: num(entry.fiber, GRAMS_MAX), water: num(entry.water, WATER_MAX_ML), sleepH: num(entry.sleepH, SLEEP_MAX_H, 1),
+      // the calorie calculator (lib/energy.js): on unless switched off, and what it needs
+      auto: entry.auto !== false,
+      heightCm: range(entry.heightCm, 100, 250), birthYear: range(entry.birthYear, 1900, 2100), sex: one(entry.sex, ['m', 'f']),
+      life: one(entry.life, LIFE_KEYS), extraH: num(entry.extraH, 40, 1), extraLevel: one(entry.extraLevel, EXTRA_LEVELS),
+      dir: one(entry.dir, GOAL_DIRS), rate: num(entry.rate, 1.5, 2),
+    }
+    const any = Object.entries(g).some(([k, v]) => k !== 'kind' && k !== 'auto' && v != null) || entry.auto === false
+    return any ? g : null
+  }
+  if (entry.kind === 'fast') {
+    const plan = Number.isInteger(entry.plan) && entry.plan >= 12 && entry.plan <= 23 ? entry.plan : 16
+    const start = Number(entry.start) > 0 ? Number(entry.start) : null
+    return { kind: 'fast', plan, start }
   }
   return null
 }
@@ -166,7 +208,31 @@ export const newItemId = () => uid()
 
 export const goalsOf = S => {
   const g = readItem(isMap(S?.nutriItems) ? S.nutriItems[GOALS_ID] : null)
-  return g?.kind === 'goals' ? g : { kind: 'goals', kcal: null, protein: null, water: null, sleepH: null }
+  if (g?.kind === 'goals') return g
+  // nothing set yet: every field empty and the calculator on
+  return { ...readItem({ kind: 'goals', sleepH: 1 }), sleepH: null }
+}
+
+/** The fast in progress and its plan: { plan, start } (start null when not fasting). */
+export const fastOf = S => {
+  const f = readItem(isMap(S?.nutriItems) ? S.nutriItems[FAST_ID] : null)
+  return f?.kind === 'fast' ? f : { kind: 'fast', plan: 16, start: null }
+}
+export const withFast = (map, fast, now = Date.now()) => withItem(map, FAST_ID, { ...fast, kind: 'fast' }, now)
+
+/**
+ * Ending a fast at `now`: the fast item cleared of its start, and the hours added to the day it
+ * ended on (a second fast that day adds to the first). Returns { nutriItems, dayLog }.
+ */
+export function endFast(S, now = Date.now()) {
+  const f = fastOf(S)
+  if (!f.start || now <= f.start) return { nutriItems: withFast(S?.nutriItems, { plan: f.plan, start: null }, now), dayLog: S?.dayLog || {} }
+  const h = (now - f.start) / 3600000
+  const iso = isoOf(new Date(now))
+  return {
+    nutriItems: withFast(S?.nutriItems, { plan: f.plan, start: null }, now),
+    dayLog: editDay(S, iso, d => ({ ...d, fast: Math.min(FAST_MAX_H, round((d.fast || 0) + h, 1)) }), now),
+  }
 }
 export const withGoals = (map, goals, now = Date.now()) => withItem(map, GOALS_ID, { ...goals, kind: 'goals' }, now)
 
